@@ -36,7 +36,7 @@ describe Chef::ResourceReporter do
     @node = Chef::Node.new
     @node.name("spitfire")
     @rest_client = mock("Chef::REST (mock)")
-    @rest_client.stub!(:post_rest).and_return(true)
+    @rest_client.stub!(:post).and_return(true)
     @resource_reporter = Chef::ResourceReporter.new(@rest_client)
     @new_resource      = Chef::Resource::File.new("/tmp/a-file.txt")
     @new_resource.cookbook_name = "monkey"
@@ -82,7 +82,7 @@ describe Chef::ResourceReporter do
     before do
       @rest_client.stub!(:create_url).and_return("reports/nodes/spitfire/runs/ABC123");
       @rest_client.stub!(:raw_http_request).and_return({"result"=>"ok"});
-      @rest_client.stub!(:post_rest).and_return({"uri"=>"https://example.com/reports/nodes/spitfire/runs/ABC123"});
+      @rest_client.stub!(:post).and_return({"uri"=>"https://example.com/reports/nodes/spitfire/runs/ABC123"});
 
       @resource_reporter.node_load_completed(@node, :expanded_run_list, :config)
     end
@@ -250,8 +250,7 @@ describe Chef::ResourceReporter do
     before do
       @rest_client.stub!(:create_url).and_return("reports/nodes/spitfire/runs/ABC123");
       @rest_client.stub!(:raw_http_request).and_return({"result"=>"ok"});
-      @rest_client.stub!(:post_rest).and_return({"uri"=>"https://example.com/reports/nodes/spitfire/runs/ABC123"});
-      
+      @rest_client.stub!(:post).and_return({"uri"=>"https://example.com/reports/nodes/spitfire/runs/ABC123"});
       @resource_reporter.node_load_completed(@node, :expanded_run_list, :config)
     end
     
@@ -403,6 +402,13 @@ describe Chef::ResourceReporter do
 
   describe "when updating resource history on the server" do
     before do
+      @events = Chef::EventDispatch::Dispatcher.new
+      @run_context = Chef::RunContext.new(@node, {}, @events)
+      @run_status = Chef::RunStatus.new(@node, @events)
+      @start_time = Time.new
+      @uuid = "11111111-1111-1111-1111-111111111111"
+      UUIDTools::UUID.stub!(:random_create).and_return(@uuid)
+      @resource_reporter.node_load_completed(@node, :expanded_run_list, :config)
     end
 
     context "when the server does not support storing resource history" do
@@ -410,25 +416,25 @@ describe Chef::ResourceReporter do
         # 404 getting the run_id
         @response = Net::HTTPNotFound.new("a response body", "404", "Not Found")
         @error = Net::HTTPServerException.new("404 message", @response)
-        @rest_client.should_receive(:post_rest).
-          with("reports/nodes/spitfire/runs", {:action => :begin}).
+        @rest_client.should_receive(:post).
+          with("reports/nodes/spitfire/runs", {"action" => "begin", "run_id" => @uuid, "start_time" => @start_time.to_s}).
           and_raise(@error)
       end
 
       it "assumes the feature is not enabled" do
-        @resource_reporter.node_load_completed(@node, :expanded_run_list, :config)
+        @resource_reporter.run_started(@node, @run_status)
         @resource_reporter.reporting_enabled?.should be_false
       end
 
       it "does not send a resource report to the server" do
-        @resource_reporter.node_load_completed(@node, :expanded_run_list, :config)
-        @rest_client.should_not_receive(:post_rest)
+        @resource_reporter.run_started(@node, @run_status)
+        @rest_client.should_not_receive(:post)
         @resource_reporter.run_completed(@node)
       end
 
       it "prints an error about the 404" do
         Chef::Log.should_receive(:debug).with(/404/)
-        @resource_reporter.node_load_completed(@node, :expanded_run_list, :config)
+        @resource_reporter.run_started(@node, @run_status)
       end
 
     end
@@ -438,25 +444,25 @@ describe Chef::ResourceReporter do
         # 500 getting the run_id
         @response = Net::HTTPInternalServerError.new("a response body", "500", "Internal Server Error")
         @error = Net::HTTPServerException.new("500 message", @response)
-        @rest_client.should_receive(:post_rest).
-          with("reports/nodes/spitfire/runs", {:action => :begin}).
+        @rest_client.should_receive(:post).
+          with("reports/nodes/spitfire/runs", {"action" => "begin", "run_id" => @uuid, "start_time"=> @start_time.to_s}).
           and_raise(@error)
       end
 
       it "assumes the feature is not enabled" do
-        @resource_reporter.node_load_completed(@node, :expanded_run_list, :config)
+        @resource_reporter.run_started(@node, @run_status)
         @resource_reporter.reporting_enabled?.should be_false
       end
 
       it "does not send a resource report to the server" do
-        @resource_reporter.node_load_completed(@node, :expanded_run_list, :config)
-        @rest_client.should_not_receive(:post_rest)
+        @resource_reporter.run_started(@node, @run_status)
+        @rest_client.should_not_receive(:post)
         @resource_reporter.run_completed(@node)
       end
 
       it "prints an error about the error" do
         Chef::Log.should_receive(:info).with(/500/)
-        @resource_reporter.node_load_completed(@node, :expanded_run_list, :config)
+        @resource_reporter.run_started(@node, @run_status)
       end
     end
 
@@ -467,8 +473,8 @@ describe Chef::ResourceReporter do
         # 500 getting the run_id
         @response = Net::HTTPInternalServerError.new("a response body", "500", "Internal Server Error")
         @error = Net::HTTPServerException.new("500 message", @response)
-        @rest_client.should_receive(:post_rest).
-          with("reports/nodes/spitfire/runs", {:action => :begin}).
+        @rest_client.should_receive(:post).
+          with("reports/nodes/spitfire/runs", {"action" => "begin", "run_id" => @uuid, "start_time"=> @start_time.to_s}).
           and_raise(@error)
       end
 
@@ -479,23 +485,22 @@ describe Chef::ResourceReporter do
       it "fails the run and prints an message about the error" do
         Chef::Log.should_receive(:error).with(/500/)
         lambda {
-          @resource_reporter.node_load_completed(@node, :expanded_run_list, :config)
+          @resource_reporter.run_started(@node, @run_status)
         }.should raise_error(Net::HTTPServerException)
       end
     end
 
     context "after creating the run history document" do
       before do
-        response = {"uri"=>"https://example.com/reports/nodes/spitfire/runs/ABC123"}
-        @rest_client.should_receive(:post_rest).
-          with("reports/nodes/spitfire/runs", {:action => :begin}).
+        response = {"uri"=>"https://example.com/reports/nodes/spitfire/runs/11111111-1111-1111-111111111111"}
+        @rest_client.should_receive(:post).
+          with("reports/nodes/spitfire/runs", {"action" => "begin", "run_id" => @uuid, "start_time"=> @start_time.to_s}).
           and_return(response)
-
-        @resource_reporter.node_load_completed(@node, :expanded_run_list, :config)
+        @resource_reporter.run_started(@node, @run_status)
       end
 
       it "creates a run document on the server at the start of the run" do
-        @resource_reporter.run_id.should == "ABC123"
+        @resource_reporter.run_id.should == "11111111-1111-1111-1111-111111111111"
       end
 
       it "updates the run document with resource updates at the end of the run" do
@@ -510,7 +515,7 @@ describe Chef::ResourceReporter do
         response = {"result"=>"ok"}
 
         @rest_client.should_receive(:create_url).
-          with("reports/nodes/spitfire/runs/ABC123").
+          with("reports/nodes/spitfire/runs/11111111-1111-1111-1111-111111111111").
           ordered.
           and_return(post_url)
         @rest_client.should_receive(:raw_http_request).ordered do |method, url, headers, data|
