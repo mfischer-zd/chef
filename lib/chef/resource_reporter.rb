@@ -86,6 +86,7 @@ class Chef
     attr_reader :exception
     attr_reader :run_id
     attr_reader :error_descriptions
+    attr_reader :end_time
 
     def initialize(rest_client)
       if Chef::Config[:enable_reporting] && !Chef::Config[:why_run]
@@ -112,18 +113,13 @@ class Chef
       @uuid ||= UUIDTools::UUID.random_create.to_s # Ensure the uuid is a string so the json encoding never tries to encode the uuid object
     end
 
-    def start_clock
-      @start_time ||= @run_status.start_clock
-    end
+    def run_started(node, start_time)
 
-    def run_started(node, run_status)
-      @run_status = run_status
-      start_clock
       if reporting_enabled?
         begin
           @run_id = uuid
           resource_history_url = "reports/nodes/#{node.name}/runs"
-          server_response = @rest_client.post(resource_history_url, {"action" => "begin", "run_id" => @run_id, "start_time" => @start_time.to_s})
+          server_response = @rest_client.post(resource_history_url, {"action" => "begin", "run_id" => @run_id, "start_time" => start_time.to_s})
         rescue Timeout::Error, Errno::EINVAL, Errno::ECONNRESET, EOFError, Net::HTTPBadResponse, Net::HTTPHeaderSyntaxError, Net::ProtocolError => e
           message = "Reporting error beginning run. URL: #{resource_history_url} "
           if !e.response || e.response.code.to_s != "404"
@@ -189,12 +185,14 @@ class Chef
       end
     end
 
-    def run_completed(node)
+    def run_completed(node, end_time)
+      @end_time=end_time
       @status = "success"
       post_reporting_data
     end
 
-    def run_failed(exception)
+    def run_failed(exception, end_time)
+      @end_time=end_time
       @exception = exception
       @status = "failure"
       post_reporting_data
@@ -235,6 +233,7 @@ class Chef
       run_data["run_list"] = @node.run_list.to_json
       run_data["total_res_count"] = @total_res_count.to_s
       run_data["data"] = {}
+      run_data["end_time"] = end_time.to_s
 
       if exception
         exception_data = {}

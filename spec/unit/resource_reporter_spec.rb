@@ -43,6 +43,8 @@ describe Chef::ResourceReporter do
     @cookbook_version = mock("Cookbook::Version", :version => "1.2.3")
     @new_resource.stub!(:cookbook_version).and_return(@cookbook_version)
     @current_resource  = Chef::Resource::File.new("/tmp/a-file.txt")
+    @start_time = Time.new
+    @end_time = Time.new + 20
   end
 
   context "when first created" do
@@ -90,7 +92,7 @@ describe Chef::ResourceReporter do
     context "before converging any resources" do
       before do
         @exception = Exception.new
-        @resource_reporter.run_failed(@exception)
+        @resource_reporter.run_failed(@exception, @end_time)
       end
       
       it "sets the run status to 'failure'" do
@@ -371,7 +373,7 @@ describe Chef::ResourceReporter do
         @exception.stub!(:message).and_return("Object not found")
         @exception.stub!(:backtrace).and_return(@backtrace)
         @resource_reporter.run_list_expand_failed(@node, @exception)
-        @resource_reporter.run_failed(@exception)
+        @resource_reporter.run_failed(@exception, @end_time)
         @report = @resource_reporter.prepare_run_data
       end
 
@@ -405,10 +407,11 @@ describe Chef::ResourceReporter do
       @events = Chef::EventDispatch::Dispatcher.new
       @run_context = Chef::RunContext.new(@node, {}, @events)
       @run_status = Chef::RunStatus.new(@node, @events)
-      @start_time = Time.new
       @uuid = "11111111-1111-1111-1111-111111111111"
       UUIDTools::UUID.stub!(:random_create).and_return(@uuid)
       @resource_reporter.node_load_completed(@node, :expanded_run_list, :config)
+      Time.stub!(:now).and_return(@start_time, @end_time)
+      @run_status.start_clock
     end
 
     context "when the server does not support storing resource history" do
@@ -422,19 +425,20 @@ describe Chef::ResourceReporter do
       end
 
       it "assumes the feature is not enabled" do
-        @resource_reporter.run_started(@node, @run_status)
+        puts @run_status.start_time
+        @resource_reporter.run_started(@node, @start_time)
         @resource_reporter.reporting_enabled?.should be_false
       end
 
       it "does not send a resource report to the server" do
-        @resource_reporter.run_started(@node, @run_status)
+        @resource_reporter.run_started(@node, @start_time)
         @rest_client.should_not_receive(:post)
-        @resource_reporter.run_completed(@node)
+        @resource_reporter.run_completed(@node, @end_time)
       end
 
       it "prints an error about the 404" do
         Chef::Log.should_receive(:debug).with(/404/)
-        @resource_reporter.run_started(@node, @run_status)
+        @resource_reporter.run_started(@node, @start_time)
       end
 
     end
@@ -450,19 +454,19 @@ describe Chef::ResourceReporter do
       end
 
       it "assumes the feature is not enabled" do
-        @resource_reporter.run_started(@node, @run_status)
+        @resource_reporter.run_started(@node, @start_time)
         @resource_reporter.reporting_enabled?.should be_false
       end
 
       it "does not send a resource report to the server" do
-        @resource_reporter.run_started(@node, @run_status)
+        @resource_reporter.run_started(@node, @start_time)
         @rest_client.should_not_receive(:post)
-        @resource_reporter.run_completed(@node)
+        @resource_reporter.run_completed(@node, @end_time)
       end
 
       it "prints an error about the error" do
         Chef::Log.should_receive(:info).with(/500/)
-        @resource_reporter.run_started(@node, @run_status)
+        @resource_reporter.run_started(@node, @start_time)
       end
     end
 
@@ -485,7 +489,7 @@ describe Chef::ResourceReporter do
       it "fails the run and prints an message about the error" do
         Chef::Log.should_receive(:error).with(/500/)
         lambda {
-          @resource_reporter.run_started(@node, @run_status)
+          @resource_reporter.run_started(@node, @start_time)
         }.should raise_error(Net::HTTPServerException)
       end
     end
@@ -496,7 +500,7 @@ describe Chef::ResourceReporter do
         @rest_client.should_receive(:post).
           with("reports/nodes/spitfire/runs", {"action" => "begin", "run_id" => @uuid, "start_time"=> @start_time.to_s}).
           and_return(response)
-        @resource_reporter.run_started(@node, @run_status)
+        @resource_reporter.run_started(@node, @start_time)
       end
 
       it "creates a run document on the server at the start of the run" do
@@ -527,8 +531,9 @@ describe Chef::ResourceReporter do
           data.should eq(@expected_data.to_json)
           response
         end
-
-        @resource_reporter.run_completed(@node)
+        puts @run_status.end_time
+        puts @end_time
+        @resource_reporter.run_completed(@node, @run_status.end_time)
       end
     end
 
