@@ -404,14 +404,9 @@ describe Chef::ResourceReporter do
 
   describe "when updating resource history on the server" do
     before do
-      @events = Chef::EventDispatch::Dispatcher.new
-      @run_context = Chef::RunContext.new(@node, {}, @events)
-      @run_status = Chef::RunStatus.new(@node, @events)
       @uuid = "11111111-1111-1111-1111-111111111111"
       UUIDTools::UUID.stub!(:random_create).and_return(@uuid)
       @resource_reporter.node_load_completed(@node, :expanded_run_list, :config)
-      Time.stub!(:now).and_return(@start_time, @end_time)
-      @run_status.start_clock
     end
 
     context "when the server does not support storing resource history" do
@@ -425,7 +420,6 @@ describe Chef::ResourceReporter do
       end
 
       it "assumes the feature is not enabled" do
-        puts @run_status.start_time
         @resource_reporter.run_started(@node, @start_time)
         @resource_reporter.reporting_enabled?.should be_false
       end
@@ -513,6 +507,7 @@ describe Chef::ResourceReporter do
         @resource_reporter.resource_current_state_loaded(@new_resource, :create, @current_resource)
         @resource_reporter.resource_updated(@new_resource, :create)
 
+        @resource_reporter.stub!(:end_time).and_return(@end_time)
         @expected_data = @resource_reporter.prepare_run_data
 
         post_url = "https://chef_server/example_url"
@@ -531,7 +526,7 @@ describe Chef::ResourceReporter do
           data.should eq(@expected_data.to_json)
           response
         end
-        @resource_reporter.run_completed(@node, @run_status.end_time)
+        @resource_reporter.run_completed(@node, @end_time)
       end
     end
 
