@@ -531,8 +531,6 @@ describe Chef::ResourceReporter do
           data.should eq(@expected_data.to_json)
           response
         end
-        puts @run_status.end_time
-        puts @end_time
         @resource_reporter.run_completed(@node, @run_status.end_time)
       end
     end
